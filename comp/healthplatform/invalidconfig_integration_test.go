@@ -22,6 +22,8 @@ import (
 	hostnameinterface "github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface/mock"
 	log "github.com/DataDog/datadog-agent/comp/core/log/def"
 	logmock "github.com/DataDog/datadog-agent/comp/core/log/mock"
+	schema "github.com/DataDog/datadog-agent/comp/core/schema/def"
+	schemafx "github.com/DataDog/datadog-agent/comp/core/schema/fx"
 	sysprobeconfig "github.com/DataDog/datadog-agent/comp/core/sysprobeconfig/def"
 	sysprobeconfigmock "github.com/DataDog/datadog-agent/comp/core/sysprobeconfig/mock"
 	telemetrymock "github.com/DataDog/datadog-agent/comp/core/telemetry/mock"
@@ -55,8 +57,6 @@ func requireSchema(t *testing.T) {
 // violations from both config checks reach intake without configured values.
 func TestInvalidConfigExtraErrorsSurviveFullPipeline(t *testing.T) {
 	requireSchema(t)
-	pkgconfigschema.ResetViolationsCache()
-	t.Cleanup(pkgconfigschema.ResetViolationsCache)
 	const rawInvalidLogsEnabled = "RAW_LOGS_ENABLED_MUST_NOT_APPEAR_83d4d1"
 	const rawInvalidHealthPort = "RAW_HEALTH_PORT_MUST_NOT_APPEAR_42fa6e"
 
@@ -91,10 +91,17 @@ func TestInvalidConfigExtraErrorsSurviveFullPipeline(t *testing.T) {
 			return cfg
 		}),
 		telemetrymock.Module(),
+		schemafx.Module(),
+		// validate the configurations like the Agent does when it loads them
+		fx.Invoke(func(schemaComp schema.Component, cfg config.Component, sysprobeCfg sysprobeconfig.Component) {
+			_, err := schemaComp.ValidateConfig(cfg)
+			require.NoError(t, err)
+			_, err = schemaComp.ValidateConfig(sysprobeCfg)
+			require.NoError(t, err)
+		}),
 		fx.Provide(func(t testing.TB) sysprobeconfig.Component {
 			cfg := sysprobeconfigmock.NewMock(t)
 			cfg.Set("system_probe_config.health_port", rawInvalidHealthPort, model.SourceFile)
-			cfg.Set("system_probe_config.health_port", 0, model.SourceAgentRuntime)
 			return cfg
 		}),
 		hostnameinterface.MockModule(),

@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/datadog-agent/comp/core/config"
 	hostnameinterface "github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface/def"
 	hostnamemock "github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface/mock"
+	schemaimpl "github.com/DataDog/datadog-agent/comp/core/schema/impl"
 	"github.com/DataDog/datadog-agent/comp/healthplatform/issueregistry/utils/selfident"
 	"github.com/DataDog/datadog-agent/pkg/config/model"
 	"github.com/DataDog/datadog-agent/pkg/config/schema"
@@ -45,7 +46,7 @@ func requireSchema(t *testing.T) {
 }
 
 func TestBuildIssue_SchemaViolationProducesMediumSeverity(t *testing.T) {
-	ctx := BuildContext(config.NewMock(t), "/etc/datadog-agent/datadog.yaml", schema.Violation{
+	ctx := BuildContext(config.NewMock(t), "/etc/datadog-agent/datadog.yaml", &model.Violation{
 		Path: "/agent_ipc/port", ActualType: "string", ExpectedTypes: []string{"integer"},
 	})
 	issue, err := InvalidConfigIssue{}.BuildIssue(ctx)
@@ -73,6 +74,35 @@ func TestBuildIssue_MissingConfigPath(t *testing.T) {
 	assert.NotContains(t, issue.Description, "unknown path")
 	assert.Equal(t, "Check this setting in your Agent configuration file or environment variables.", issue.Remediation.Steps[0].Text)
 	assert.Equal(t, "(unknown path)", issue.Extra.GetFields()[contextKeyConfigPath].GetStringValue())
+}
+
+func reverted(violation *model.Violation) *model.Violation {
+	violation.MarkAsReverted()
+	return violation
+}
+
+func TestBuildIssue_ValidatorMessage(t *testing.T) {
+	cfg := config.NewMock(t)
+	for _, tc := range []struct {
+		name      string
+		violation *model.Violation
+		want      string
+	}{
+		{"reverted", reverted(&model.Violation{Path: "/hostname", SettingKey: "hostname", Message: "at '/hostname': 'banana' does not match pattern '^[^a]+$'"}),
+			"invalid value for 'hostname', reverting to default. Error: `at '/hostname': 'banana' does not match pattern '^[^a]+$'`"},
+		{"kept", &model.Violation{Path: "/hostname", SettingKey: "hostname", Message: "at '/hostname': 'banana' does not match pattern '^[^a]+$'"},
+			"invalid value for 'hostname'. Error: `at '/hostname': 'banana' does not match pattern '^[^a]+$'`"},
+		{"no setting key", &model.Violation{Path: "", Message: "got string, want object"},
+			"invalid configuration: `got string, want object`"},
+		{"markdown", reverted(&model.Violation{Path: "/hostname", SettingKey: "hostname", Message: "at '/hostname': '`[link](https://example.test)' does not match pattern 'x'"}),
+			"invalid value for 'hostname', reverting to default. Error: ``at '/hostname': '`[link](https://example.test)' does not match pattern 'x'``"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issue, err := InvalidConfigIssue{}.BuildIssue(BuildContext(cfg, "/etc/datadog-agent/datadog.yaml", tc.violation))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, issue.Description)
+		})
+	}
 }
 
 func TestBuildIssue_Remediation(t *testing.T) {
@@ -157,21 +187,24 @@ func TestCheck_SeparateIssuesRemainStable(t *testing.T) {
 	assert.NotEqual(t, ids["/agent_ipc/port"], ids["/dogstatsd_port"])
 	cfg.Set("agent_ipc.port", 5001, model.SourceFile)
 	cfg.Set("dogstatsd_port", []string{"still wrong"}, model.SourceFile)
-	// the validation result is cached, reset it to validate the updated config
-	schema.ResetViolationsCache()
+	// validate the updated configuration, like the Agent does when it loads it
+	_, err = c.schema.ValidateConfig(cfg)
+	require.NoError(t, err)
 	reports, err = c.Run()
 	require.NoError(t, err)
 	require.Len(t, reports, 1)
 	assert.Equal(t, ids["/dogstatsd_port"], reports[0].IssueID, "changing the rejected value must not create another issue")
 	cfg.Set("dogstatsd_port", 8125, model.SourceFile)
-	// the validation result is cached, reset it to validate the updated config
-	schema.ResetViolationsCache()
+	// validate the updated configuration, like the Agent does when it loads it
+	_, err = c.schema.ValidateConfig(cfg)
+	require.NoError(t, err)
 	reports, err = c.Run()
 	require.NoError(t, err)
 	assert.Empty(t, reports)
 	cfg.Set("agent_ipc.port", "wrong again", model.SourceFile)
-	// the validation result is cached, reset it to validate the updated config
-	schema.ResetViolationsCache()
+	// validate the updated configuration, like the Agent does when it loads it
+	_, err = c.schema.ValidateConfig(cfg)
+	require.NoError(t, err)
 	reports, err = c.Run()
 	require.NoError(t, err)
 	require.Len(t, reports, 1)
@@ -283,7 +316,8 @@ func TestCheck_ResolvedSecrets(t *testing.T) {
 	for _, tc := range []struct{ name, value, want string }{
 		{"valid_integer", "5001", ""},
 		{"invalid_integer", "SECRET_INVALID_INTEGER", "got string, want integer"},
-		{"resolved_enc_literal", "ENC[SECRET_LITERAL]", "got string, want integer"},
+		// the configuration is validated before secrets are resolved, so ENC[] values are always placeholders
+		{"enc_placeholder", "ENC[SECRET_LITERAL]", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.NewMockFromYAML(t, "agent_ipc:\n  port: ENC[value]\n")
@@ -306,16 +340,13 @@ func TestCheck_ResolvedSecrets(t *testing.T) {
 	}
 }
 
-func TestCheck_ResolvedSecretInMap(t *testing.T) {
+// The configuration is validated before secrets are resolved: a placeholder in a compound setting isn't reported
+func TestCheck_SecretPlaceholderInMap(t *testing.T) {
 	requireSchema(t)
 	cfg := config.NewMockFromYAML(t, "additional_endpoints: {'https://example.test': 'ENC[PRIVATE_HANDLE]'}")
-	cfg.Set("additional_endpoints", cfg.Get("additional_endpoints"), model.SourceSecret)
 	reports, err := newTestChecker(cfg, testHostname(t), testSelfIdent(t)).Run()
 	require.NoError(t, err)
-	require.Len(t, reports, 1)
-	issue, err := InvalidConfigIssue{}.BuildIssue(reports[0].Context)
-	require.NoError(t, err)
-	assert.Equal(t, "`/additional_endpoints/https:~1~1example.test` expects a YAML list, but received a string.", issue.Description)
+	assert.Empty(t, reports)
 }
 
 func TestResolveDefault(t *testing.T) {
@@ -375,8 +406,14 @@ func (f fakeConfigFileUsed) ConfigFileUsed() string {
 	return f.path
 }
 
-// newTestChecker returns a checker that validates cfg from scratch, ignoring the results cached by previous tests.
+// newTestChecker returns a checker validating cfg with a new schema component, so results cached by previous tests are
+// ignored.
 func newTestChecker(cfg config.Component, hostname hostnameinterface.Component, selfIdent *selfident.SelfIdent) *checker {
-	schema.ResetViolationsCache()
-	return newChecker(cfg, hostname, selfIdent)
+	schemaComp := schemaimpl.NewComponent().Comp
+	if cfg != nil {
+		// validate the configuration like the Agent does when it loads it. Errors (ie: the schema isn't embedded in
+		// the test binary) leave no violation to report.
+		_, _ = schemaComp.ValidateConfig(cfg)
+	}
+	return newChecker(cfg, schemaComp, hostname, selfIdent)
 }

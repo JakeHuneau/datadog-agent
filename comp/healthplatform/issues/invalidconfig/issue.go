@@ -24,6 +24,7 @@ const (
 	contextKeyViolations  = "violations"
 	contextKeyViolation   = "violation"
 	contextKeySettingPath = "setting_path"
+	contextKeyMessage     = "message"
 )
 
 // InvalidConfigIssue is the template for "invalid-config" issues.
@@ -50,6 +51,9 @@ func BuildIssue(ctx map[string]string, component string) *healthplatform.Issue {
 	if path == "" {
 		title = "Invalid " + component + " configuration"
 		description = "The " + component + " configuration does not match the configuration schema."
+	}
+	if message := ctx[contextKeyMessage]; message != "" {
+		description = message
 	}
 	fields := map[string]any{}
 	var violation violationPayload
@@ -94,6 +98,26 @@ func BuildIssue(ctx map[string]string, component string) *healthplatform.Issue {
 			},
 		},
 	}
+}
+
+// inlineCode replaces control characters with spaces and wraps text as Markdown code.
+// Its fence is longer than any backtick run so the text cannot close it.
+func inlineCode(text string) string {
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+	fenceLength := 1
+	for _, ticks := range strings.FieldsFunc(text, func(r rune) bool { return r != '`' }) {
+		fenceLength = max(fenceLength, len(ticks)+1)
+	}
+	fence := strings.Repeat("`", fenceLength)
+	if strings.HasPrefix(text, "`") || strings.HasSuffix(text, "`") {
+		text = " " + text + " "
+	}
+	return fence + text + fence
 }
 
 var typeLabels = map[string]string{
@@ -145,24 +169,4 @@ func formatViolation(violation violationPayload) (string, string) {
 	default:
 		return "", ""
 	}
-}
-
-// inlineCode replaces control characters with spaces and wraps text as Markdown code.
-// Its fence is longer than any backtick run so the text cannot close it.
-func inlineCode(text string) string {
-	text = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, text)
-	fenceLength := 1
-	for _, ticks := range strings.FieldsFunc(text, func(r rune) bool { return r != '`' }) {
-		fenceLength = max(fenceLength, len(ticks)+1)
-	}
-	fence := strings.Repeat("`", fenceLength)
-	if strings.HasPrefix(text, "`") || strings.HasSuffix(text, "`") {
-		text = " " + text + " "
-	}
-	return fence + text + fence
 }

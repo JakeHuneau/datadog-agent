@@ -15,11 +15,11 @@ import (
 	"github.com/DataDog/datadog-agent/comp/core/config"
 	hostnameinterface "github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface/def"
 	hostnamemock "github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface/mock"
+	schemaimpl "github.com/DataDog/datadog-agent/comp/core/schema/impl"
 	sysprobeconfig "github.com/DataDog/datadog-agent/comp/core/sysprobeconfig/def"
 	sysprobeconfigmock "github.com/DataDog/datadog-agent/comp/core/sysprobeconfig/mock"
 	"github.com/DataDog/datadog-agent/comp/healthplatform/issueregistry/utils/selfident"
 	"github.com/DataDog/datadog-agent/pkg/config/model"
-	"github.com/DataDog/datadog-agent/pkg/config/schema"
 )
 
 func testHostname(name string) hostnameinterface.Component {
@@ -60,8 +60,9 @@ func TestCheck_SeparateIssuesRemainStable(t *testing.T) {
 	}
 	assert.NotEqual(t, ids["/system_probe_config/health_port"], ids["/system_probe_config/internal_profiling/api_key"])
 	cfg.SetInTest("system_probe_config.health_port", 5558)
-	// the validation result is cached, reset it to validate the updated config
-	schema.ResetViolationsCache()
+	// validate the updated configuration, like the Agent does when it loads it
+	_, err = c.schema.ValidateConfig(cfg)
+	require.NoError(t, err)
 	reports, err = c.Run()
 	require.NoError(t, err)
 	require.Len(t, reports, 1)
@@ -115,7 +116,6 @@ func TestBuildIssue_LocksContract(t *testing.T) {
 func TestCheck_ExplainsTypeAndDefault(t *testing.T) {
 	cfg := sysprobeconfigmock.NewMock(t)
 	cfg.Set("system_probe_config.health_port", "PRIVATE_INVALID_PORT", model.SourceFile)
-	cfg.Set("system_probe_config.health_port", 5558, model.SourceAgentRuntime)
 	reports, err := newTestChecker(cfg, testHostname("h"), testSelfIdent()).Run()
 	require.NoError(t, err)
 	require.Len(t, reports, 1)
@@ -179,8 +179,14 @@ func TestBuiltInStartupHealthCheck_GatedByFlag(t *testing.T) {
 	assert.Empty(t, reports)
 }
 
-// newTestChecker returns a checker that validates cfg from scratch, ignoring the results cached by previous tests.
+// newTestChecker returns a checker validating cfg with a new schema component, so results cached by previous tests are
+// ignored.
 func newTestChecker(cfg sysprobeconfig.Component, hostname hostnameinterface.Component, selfIdent *selfident.SelfIdent) *checker {
-	schema.ResetViolationsCache()
-	return newChecker(cfg, hostname, selfIdent)
+	schemaComp := schemaimpl.NewComponent().Comp
+	if cfg != nil {
+		// validate the configuration like the Agent does when it loads it. Errors (ie: the schema isn't embedded in
+		// the test binary) leave no violation to report.
+		_, _ = schemaComp.ValidateConfig(cfg)
+	}
+	return newChecker(cfg, schemaComp, hostname, selfIdent)
 }

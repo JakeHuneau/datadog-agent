@@ -9091,6 +9091,17 @@ properties:
     default: ${run_path}
   runtime_security_config:
     $ref: runtime_security_config.yaml
+  schema:
+    node_type: section
+    type: object
+    properties:
+      enforce:
+        node_type: setting
+        type: boolean
+        default: true
+        description: |-
+          Reverts the settings that don't match the configuration schema to their default value. When disabled,
+          invalid settings are still reported but keep their configured value.
   sds_result:
     node_type: section
     type: object

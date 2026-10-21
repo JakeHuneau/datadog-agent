@@ -29,6 +29,41 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/util/scrubber"
 )
 
+// noopSchemaValidator is a pkgconfigmodel.SchemaValidator that never reports any violation
+type noopSchemaValidator struct{}
+
+func (noopSchemaValidator) ValidateConfig(pkgconfigmodel.Reader) ([]*pkgconfigmodel.Violation, error) {
+	return nil, nil
+}
+
+// hostnameViolationValidator is a pkgconfigmodel.SchemaValidator reporting the hostname as invalid
+type hostnameViolationValidator struct{}
+
+func (hostnameViolationValidator) ValidateConfig(pkgconfigmodel.Reader) ([]*pkgconfigmodel.Violation, error) {
+	return []*pkgconfigmodel.Violation{{Message: "invalid hostname", Path: "/hostname", SettingKey: "hostname"}}, nil
+}
+
+func TestLoadCustomSchemaEnforcement(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		enforceSchema bool
+		hostname      string
+	}{
+		{"enforced", true, ""},
+		{"not enforced", false, "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := newTestConf(t)
+			configPath := filepath.Join(t.TempDir(), "datadog.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte("hostname: invalid\n"), 0o600))
+			config.SetConfigFile(configPath)
+
+			require.NoError(t, loadCustom(config, hostnameViolationValidator{}, tc.enforceSchema))
+			assert.Equal(t, tc.hostname, config.GetString("hostname"))
+		})
+	}
+}
+
 func TestConfigureDelegatedAuthAllowsAsyncStartupOnlyForPrimaryKey(t *testing.T) {
 	config := newTestConf(t)
 	config.SetInTest("delegated_auth.org_uuid", "primary-org")
@@ -529,7 +564,7 @@ func TestProxy(t *testing.T) {
 				c.setup(t, config)
 			}
 
-			err := LoadDatadog(config, resolver, delegatedauthmock.New(t))
+			err := LoadDatadog(config, resolver, delegatedauthmock.New(t), noopSchemaValidator{})
 			require.NoError(t, err)
 
 			c.tests(t, config)
@@ -646,7 +681,7 @@ func TestDatabaseMonitoringAurora(t *testing.T) {
 				c.setup(t, config)
 			}
 
-			err := LoadDatadog(config, resolver, delegatedauthmock.New(t))
+			err := LoadDatadog(config, resolver, delegatedauthmock.New(t), noopSchemaValidator{})
 			require.NoError(t, err)
 
 			c.tests(t, config)
@@ -1377,7 +1412,7 @@ func TestConfigAssignAtPath(t *testing.T) {
 	os.WriteFile(configPath, testExampleConf, 0o600)
 	config.SetConfigFile(configPath)
 
-	err := loadCustom(config)
+	err := loadCustom(config, noopSchemaValidator{}, true)
 	assert.NoError(t, err)
 
 	err = configAssignAtPath(config, []string{"secret_backend_command"}, "different")
@@ -1425,7 +1460,7 @@ func TestConfigAssignAtPathWorksWithGet(t *testing.T) {
 	os.WriteFile(configPath, testExampleConf, 0o600)
 	config.SetConfigFile(configPath)
 
-	err := loadCustom(config)
+	err := loadCustom(config, noopSchemaValidator{}, true)
 	assert.NoError(t, err)
 
 	err = configAssignAtPath(config, []string{"secret_backend_command"}, "different")
@@ -1467,7 +1502,7 @@ func TestConfigAssignAtPathSimple(t *testing.T) {
 	os.WriteFile(configPath, testSimpleConf, 0o600)
 	config.SetConfigFile(configPath)
 
-	err := loadCustom(config)
+	err := loadCustom(config, noopSchemaValidator{}, true)
 	assert.NoError(t, err)
 
 	err = configAssignAtPath(config, []string{"secret_backend_arguments", "0"}, "password1")
@@ -1520,7 +1555,7 @@ use_proxy_for_cloud_metadata: true
 		"diff_url": "second_value",
 	})
 
-	err := loadCustom(config)
+	err := loadCustom(config, noopSchemaValidator{}, true)
 	assert.NoError(t, err)
 
 	err = resolveSecrets(config, resolver, "unit_test")
@@ -1567,7 +1602,7 @@ additional_endpoints:
 	os.WriteFile(configPath, testIntKeysConf, 0o600)
 	config.SetConfigFile(configPath)
 
-	err := loadCustom(config)
+	err := loadCustom(config, noopSchemaValidator{}, true)
 	assert.NoError(t, err)
 
 	err = configAssignAtPath(config, []string{"additional_endpoints", "2"}, "cherry")
@@ -1715,7 +1750,7 @@ flare_stripped_keys:
 	require.NoError(t, err)
 	cfg.SetConfigFile(configPath)
 
-	err = LoadDatadog(cfg, secretsmock.New(t), delegatedauthmock.New(t))
+	err = LoadDatadog(cfg, secretsmock.New(t), delegatedauthmock.New(t), noopSchemaValidator{})
 	require.NoError(t, err)
 
 	stringToScrub := `api_key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
