@@ -1,0 +1,67 @@
+{
+    "filters": {
+        "pkg/network": {
+            "exclude": false
+        },
+        "pkg/network/config": {
+            "exclude": false
+        },
+        "pkg/network/config/sysctl": {
+            "exclude": false
+        },
+        "pkg/network/containers": {
+            "exclude": false
+        },
+        "pkg/network/dns": {
+            "exclude": false
+        },
+        "pkg/network/ebpf": {
+            "exclude": false
+        },
+        "pkg/network/encoding": {
+            "exclude": false
+        },
+        "pkg/network/encoding/marshal": {
+            "exclude": false
+        },
+        "pkg/network/events": {
+            "exclude": false
+        },
+        "pkg/network/filter": {
+            "exclude": false
+        },
+        "pkg/network/netlink": {
+            "exclude": false
+        },
+        "pkg/network/remoteservice": {
+            "exclude": false
+        },
+        "pkg/network/sender": {
+            "exclude": false
+        },
+        "pkg/network/tracer": {
+            "exclude": false
+        },
+        "pkg/network/tracer/connection": {
+            "exclude": false
+        },
+        "pkg/network/tracer/connection/ebpfless": {
+            "exclude": false
+        },
+        "pkg/network/tracer/connection/fentry": {
+            "exclude": false
+        },
+        "pkg/network/tracer/connection/kprobe": {
+            "exclude": false
+        },
+        "pkg/network/tracer/networkfilter": {
+            "exclude": false
+        },
+        "pkg/network/tracer/offsetguess": {
+            "exclude": false
+        },
+        "pkg/ebpf/btf": {
+            "exclude": false
+        }
+    }
+}
