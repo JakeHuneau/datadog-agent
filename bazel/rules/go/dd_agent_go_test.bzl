@@ -100,6 +100,7 @@ def dd_agent_go_test(
     visibility = None
     if native.package_name().startswith("test/new-e2e/tests/"):
         kwargs["importpath"] = importpath  # for CI Visibility's module-identity parity
+        visibility = ["@e2e_tests//:__subpackages__"]
 
     if include_default:
         _test_tag_set_check_name(name)
