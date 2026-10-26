@@ -1172,7 +1172,6 @@
 /internal/third_party/kubernetes @DataDog/container-integrations
 /internal/third_party/golang/    @DataDog/container-integrations
 
-/q_branch/              @DataDog/q-branch
 /internal/qbranch/      @DataDog/q-branch
 /internal/qbranch/anomalydetection-scorer/    @DataDog/agent-anomaly-detection
 /internal/qbranch/anomalydetection-testbench/ @DataDog/agent-anomaly-detection
