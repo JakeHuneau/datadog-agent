@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/config/env"
 	"github.com/DataDog/datadog-agent/pkg/sbom"
 	containersimage "github.com/DataDog/datadog-agent/pkg/util/containers/image"
+	"github.com/DataDog/datadog-agent/pkg/util/log"
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 
 	dimage "github.com/moby/moby/api/types/image"
@@ -61,7 +62,7 @@ func buildDockerLayerPaths(inspect dimage.InspectResponse) ([]ftypes.LayerPath, 
 const DockerCollector = "docker"
 
 // Custom code based on https://github.com/aquasecurity/trivy/blob/2206e008ea6e5f4e5c1aa7bc8fc77dae7041de6a/pkg/fanal/image/daemon/docker.go `DockerImage`
-func convertDockerImage(ctx context.Context, client client.ImageAPIClient, imgMeta *workloadmeta.ContainerImageMetadata) (*image, func(), error) {
+func convertDockerImage(ctx context.Context, client client.ImageAPIClient, imgMeta *workloadmeta.ContainerImageMetadata, scanOptions sbom.ScanOptions) (*image, func(), error) {
 	cleanup := func() {}
 
 	// <image_name>:<tag> pattern like "alpine:3.15"
@@ -94,7 +95,7 @@ func convertDockerImage(ctx context.Context, client client.ImageAPIClient, imgMe
 
 	img := &image{
 		name:    imgMeta.Name,
-		opener:  imageOpener(ctx, DockerCollector, imageID, f, client.ImageSave),
+		opener:  imageOpener(ctx, DockerCollector, imageID, f, client.ImageSave, imgMeta, scanOptions),
 		inspect: inspectResult.InspectResponse,
 		history: configHistory(historyResult.Items),
 	}
@@ -119,9 +120,12 @@ func (c *fakeDockerContainer) Layers() (layers []ftypes.LayerPath) {
 	return c.fakeContainer.Layers()
 }
 
-// ScanDockerImage scans a docker image by exporting it and scanning the tarball
+// ScanDockerImage scans a docker image, and returns the report with the
+// method that produced it. It reads the layers in place when scanOptions
+// selects the direct scan and the image has overlay2 layers the Agent can
+// read, and otherwise scans an export of the image.
 func (c *Collector) ScanDockerImage(ctx context.Context, imgMeta *workloadmeta.ContainerImageMetadata, client client.ImageAPIClient, scanOptions sbom.ScanOptions) (*Report, string, error) {
-	fanalImage, cleanup, err := convertDockerImage(ctx, client, imgMeta)
+	fanalImage, cleanup, err := convertDockerImage(ctx, client, imgMeta, scanOptions)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -145,11 +149,15 @@ func (c *Collector) ScanDockerImage(ctx context.Context, imgMeta *workloadmeta.C
 			paths[i] = l.Path
 		}
 		report, err := c.scanOverlayFS(ctx, paths, fakeContainer, imgMeta, scanOptions)
-		if err != nil {
+		switch {
+		case err == nil:
+			return report, "overlayfs", nil
+		case !errors.Is(err, ErrLayerUnreadable):
 			return nil, "overlayfs", err
 		}
-
-		return report, "overlayfs", nil
+		c.warnDockerExport.Do(func() {
+			log.Warnf("Exporting Docker images for SBOM scans, since the Agent cannot read their layers in place: %v", err)
+		})
 	}
 
 	report, err := c.scanImage(ctx, fanalImage, scanOptions)
