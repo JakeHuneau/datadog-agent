@@ -1,4 +1,6 @@
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("//bazel/rules/go:dd_agent_go_test.bzl", "dd_agent_go_test")
+load("//test/new-e2e:tests/windows_testsuites.bzl", "windows_testsuites")
 
 dd_agent_go_test(
     name = "security-agent-functional_test",
@@ -14,5 +16,25 @@ dd_agent_go_test(
         "//test/new-e2e/tests/windows",
         "//test/new-e2e/tests/windows/common/agent",
         "@com_github_stretchr_testify//require",
+    ],
+)
+
+windows_testsuites(
+    name = "windows_testsuites",
+    testonly = True,
+    tags = ["manual"],
+    tests = {
+        "//pkg/security/probe:probe_test_functionaltests": "etw/testsuite.exe",
+        "//pkg/security/tests:tests_test_bpf_functionaltests": "testsuite.exe",
+    },
+)
+
+pkg_install(
+    name = "install_windows_testsuites",
+    testonly = True,
+    srcs = [":windows_testsuites"],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
     ],
 )
