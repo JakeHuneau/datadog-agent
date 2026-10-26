@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -108,10 +107,8 @@ func (v *apmvmSuite) SetupSuite() {
 	t := v.T()
 
 	// Get the absolute path to the test assets directory
-	currDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	v.testspath = filepath.Join(currDir, "artifacts")
+	v.testspath = os.Getenv("E2E_ARTIFACTS_DIR")
+	require.NotEmpty(t, v.testspath, "E2E_ARTIFACTS_DIR must point to the test assets directory")
 
 	// this creates the VM.
 	v.BaseSuite.SetupSuite()
@@ -121,7 +118,7 @@ func (v *apmvmSuite) SetupSuite() {
 	// get the remote host
 	vm := v.Env().RemoteHost
 
-	err = windows.InstallIIS(vm)
+	err := windows.InstallIIS(vm)
 	require.NoError(t, err)
 	// HEADSUP the paths are windows, but this will execute in linux. So fix the paths
 	t.Log("IIS Installed, continuing")
@@ -160,14 +157,14 @@ func copyFileToSiteRoot(host *components.RemoteHost, sitename, filename, targetf
 	}
 
 	// test this out.  Should copy path-relative to assets
-	host.CopyFile(filename, sitepath)
+	host.CopyFileFromFS(embeddedAssets, filename, sitepath)
 	return nil
 }
 
 func copyFileToAppRoot(host *components.RemoteHost, app windows.IISApplicationDefinition, filename, targetfilename string) error {
 
 	apppath := path.Join(app.PhysicalPath, targetfilename)
-	host.CopyFile(filename, apppath)
+	host.CopyFileFromFS(embeddedAssets, filename, apppath)
 	return nil
 }
 
@@ -223,11 +220,11 @@ func setupTest(vm *components.RemoteHost, test usmTaggingTest) error {
 	removeIfExists(vm, clientAppConfig)
 
 	if test.clientJSONFile != "" {
-		vm.CopyFile(test.clientJSONFile, clientJSONFile)
+		vm.CopyFileFromFS(embeddedAssets, test.clientJSONFile, clientJSONFile)
 	}
 
 	if test.clientAppConfig != "" {
-		vm.CopyFile(test.clientAppConfig, clientAppConfig)
+		vm.CopyFileFromFS(embeddedAssets, test.clientAppConfig, clientAppConfig)
 	}
 
 	cleanSites(vm)
@@ -290,13 +287,13 @@ func (v *apmvmSuite) TestUSMAutoTaggingSuite() {
 
 	// copy test script
 	testScript := path.Join("c:", "users", "administrator", "test_tags.ps1")
-	vm.CopyFile("usmtest/test_tags.ps1", testScript)
+	vm.CopyFileFromFS(embeddedAssets, "usmtest/test_tags.ps1", testScript)
 
 	testExe := path.Join("c:", "users", "administrator", "littleget.exe")
-	vm.CopyFile("usmtest/littleget.exe", testExe)
+	vm.CopyFileFromFS(embeddedAssets, "usmtest/littleget.exe", testExe)
 
 	pipeExe := path.Join("c:", "users", "administrator", "NamedPipeCmd.exe")
-	vm.CopyFile("usmtest/NamedPipeCmd.exe", pipeExe)
+	vm.CopyFileFromFS(embeddedAssets, "usmtest/NamedPipeCmd.exe", pipeExe)
 
 	pscommand := "%s %s -TargetHost localhost -TargetPort %s -TargetPath %s -ExpectedClientTags %s -ExpectedServerTags %s -ConnExe %s"
 

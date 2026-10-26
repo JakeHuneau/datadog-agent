@@ -7,5 +7,5 @@ package sysprobefunctional
 
 import "embed"
 
-//go:embed assets
+//go:embed assets usmtest
 var embeddedAssets embed.FS

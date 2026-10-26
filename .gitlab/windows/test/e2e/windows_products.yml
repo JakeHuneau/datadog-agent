@@ -84,6 +84,7 @@ new-e2e-windows-systemprobe:
     - windows_msi_and_bosh_zip_x64-a7
   variables:
     TARGETS: ./tests/sysprobe-functional
+    E2E_ARTIFACTS_DIR: $CI_PROJECT_DIR/test/new-e2e/tests/sysprobe-functional/artifacts
     TEAM: windows-products
   parallel:
     matrix:
@@ -101,4 +102,5 @@ new-e2e-windows-security-agent:
     - tests_windows_secagent_x64
   variables:
     TARGETS: ./tests/security-agent-functional
+    E2E_ARTIFACTS_DIR: $CI_PROJECT_DIR/test/new-e2e/tests/security-agent-functional/artifacts
     TEAM: windows-products

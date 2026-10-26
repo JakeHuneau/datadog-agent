@@ -9,7 +9,6 @@ import (
 	"flag"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -45,10 +44,8 @@ func (v *vmSuite) SetupSuite() {
 	t := v.T()
 
 	// Get the absolute path to the test assets directory
-	currDir, err := os.Getwd()
-	require.NoError(t, err)
-
-	v.testspath = filepath.Join(currDir, "artifacts")
+	v.testspath = os.Getenv("E2E_ARTIFACTS_DIR")
+	require.NotEmpty(t, v.testspath, "E2E_ARTIFACTS_DIR must point to the test assets directory")
 }
 
 func (v *vmSuite) TestSystemProbeNPMSuite() {
