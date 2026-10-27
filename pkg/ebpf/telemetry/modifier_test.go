@@ -106,3 +106,56 @@ func TestModifierAppliesMultipleTimes(t *testing.T) {
 		require.NoError(t, mgr.Stop(manager.CleanAll), "Stop failed on try %d", i)
 	}
 }
+
+// TestFailedLoadDoesNotLeakHelperKeys checks that a manager which fails to load after
+// instruction patching leaves no helper-error keys behind under its module name, so the
+// next manager initialized under the same module name (e.g. a fallback) can fill its own
+// helper map, which is sized to its own program count.
+func TestFailedLoadDoesNotLeakHelperKeys(t *testing.T) {
+	skipTestIfEBPFTelemetryNotSupported(t)
+	NewEBPFErrorsCollector()
+
+	modifier := ErrorsTelemetryModifier{}
+	mname := names.NewModuleName("failed_load")
+
+	err := ddebpf.LoadCOREAsset("error_telemetry.o", func(buf bytecode.AssetReader, opts manager.Options) error {
+		failed := &manager.Manager{}
+		require.NoError(t, failed.LoadELF(buf))
+		// distinct program names, so leaked keys can't collide with the second manager's keys
+		specs, err := failed.GetProgramSpecs()
+		require.NoError(t, err)
+		for _, spec := range specs {
+			spec.Name = "stale_" + spec.Name
+		}
+
+		opts.RemoveRlimit = true
+		require.NoError(t, modifier.BeforeInit(failed, mname, &opts))
+		// an invalid map size fails the collection load, which runs after instruction patching
+		opts.MapSpecEditors["error_map"] = manager.MapSpecEditor{MaxEntries: 0, EditorFlag: manager.EditMaxEntries}
+		require.Error(t, failed.InitWithOptions(nil, opts), "the first manager was expected to fail to load")
+		return nil
+	})
+	require.NoError(t, err)
+
+	err = ddebpf.LoadCOREAsset("error_telemetry.o", func(buf bytecode.AssetReader, opts manager.Options) error {
+		mgr := &manager.Manager{
+			Probes: []*manager.Probe{
+				{ProbeIdentificationPair: manager.ProbeIdentificationPair{EBPFFuncName: "kprobe__vfs_open"}},
+			},
+		}
+		opts.RemoveRlimit = true
+		opts.ActivatedProbes = []manager.ProbesSelector{
+			&manager.ProbeSelector{ProbeIdentificationPair: manager.ProbeIdentificationPair{EBPFFuncName: "kprobe__vfs_open"}},
+		}
+		require.NoError(t, mgr.LoadELF(buf))
+		require.NoError(t, modifier.BeforeInit(mgr, mname, &opts))
+		require.NoError(t, mgr.InitWithOptions(nil, opts))
+		t.Cleanup(func() {
+			_ = modifier.BeforeStop(mgr, mname, manager.CleanAll)
+			_ = mgr.Stop(manager.CleanAll)
+		})
+		require.NoError(t, modifier.AfterInit(mgr, mname, &opts), "second manager under the same module name failed to fill its telemetry maps")
+		return nil
+	})
+	require.NoError(t, err)
+}
