@@ -396,6 +396,20 @@ func TestHandleSuspend_UsesFlushNotFlushAll(t *testing.T) {
 	assert.Equal(t, int32(0), metric.flushAllCount.Load(), "/suspend must not call FlushAll")
 }
 
+// TestHandleSuspend_ForceFlushesTraceAgentWithoutStopping pins that /suspend
+// calls FlushAll on a trace agent that supports both FlushAll and Stop. Stats
+// have to go out, but the VM can resume and must keep tracing.
+func TestHandleSuspend_ForceFlushesTraceAgentWithoutStopping(t *testing.T) {
+	trace := &mockTraceAgent{}
+	srv := NewServer(0, &mockFlusher{}, trace, &mockLogsAgent{}, &mockMetricEmitter{}, &mockSampleDrainer{}, metrics.MetricSourceAWSMicroVMEnhanced, 2*time.Second, nil, nil, HookToggles{}, nil)
+
+	srv.handleSuspend(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, pathSuspend, nil))
+
+	assert.Equal(t, int32(1), trace.flushAllCount.Load(), "/suspend must call FlushAll")
+	assert.Equal(t, int32(0), trace.stopCount.Load(), "/suspend must not call Stop")
+	assert.Equal(t, int32(0), trace.flushCount.Load(), "/suspend must not call Flush")
+}
+
 // TestHandleTerminate_UsesFlushAllNotFlush pins that /terminate calls
 // FlushAll, not Flush (see ForceFlusher for why).
 func TestHandleTerminate_UsesFlushAllNotFlush(t *testing.T) {

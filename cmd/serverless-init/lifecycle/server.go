@@ -121,11 +121,19 @@ type Flusher interface {
 }
 
 // ForceFlusher is optionally satisfied by metricFlusher (ServerlessMetricAgent)
-// and traceFlusher (ServerlessTraceAgent). flushAll calls it only
-// for /terminate, never /suspend: /suspend can resume, and forcing the open
-// bucket there would let a later flush send a second, partial point for that
-// bucket — overwriting the pre-suspend data in the backend instead of merging
-// with it.
+// and traceFlusher (ServerlessTraceAgent). FlushAll also sends what Flush holds
+// back: the open metric bucket, or the stats concentrator's newest buckets.
+//
+// For trace stats, flushAll calls it on /suspend too, since the platform
+// terminates a suspended VM without calling /terminate (see handleSuspend).
+// Stats sent early aren't overwritten after a resume.
+//
+// For metrics, it's /terminate only. If /suspend sent the open bucket, any
+// sample landing in it before the freeze would make the time sampler re-create
+// the bucket and zero-fill every active counter, so a resume would overwrite
+// that bucket for every counter. The cost: a suspended VM that gets terminated
+// never sends its open bucket (up to 10s, including the suspend lifecycle
+// metric).
 type ForceFlusher interface {
 	FlushAll()
 }
@@ -529,6 +537,7 @@ func mirrorResponse(w http.ResponseWriter, resp *http.Response) {
 // It first drains any pending metric samples so that lifecycle metrics
 // emitted immediately before this call are included in the flush.
 // forceFlushAll is true only for /terminate (see ForceFlusher, TraceStopper).
+// Trace stats are force-flushed on /suspend too.
 func (s *Server) flushAll(flushCtx context.Context, forceFlushAll bool) {
 	if s.sampleDrainer != nil {
 		drained := make(chan struct{})
@@ -556,6 +565,8 @@ func (s *Server) flushAll(flushCtx context.Context, forceFlushAll bool) {
 				ff.FlushAll()
 			}
 			ts.Stop()
+		} else if ff, ok := s.traceFlusher.(ForceFlusher); ok {
+			ff.FlushAll()
 		} else {
 			s.traceFlusher.Flush()
 		}
@@ -601,7 +612,7 @@ func (s *Server) waitForFlushes(flushCtx context.Context, wg *sync.WaitGroup) {
 // max(forwardTimeout, flushTimeout)+ε. Known limitation: telemetry produced
 // by the user app during PassThrough may arrive in the pipeline after
 // Flush() returns and be missed. Residual items survive a suspend→resume
-// cycle (Firecracker preserves process memory), so the race is recoverable.
+// cycle (Firecracker preserves process memory), but not a suspended VM's termination.
 //
 // flushSequential: flush runs after PassThrough returns; wall-clock is
 // forwardTimeout+flushTimeout. Eliminates the race at the cost of higher
@@ -759,19 +770,18 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 // buffers the response body, waits for the user app to finish writing it, then
 // flushes) because the VM is torn down with no recovery path.
 //
-// TODO(platform-contract): verify whether the AWS MicroVM platform guarantees
-// that /terminate is always called before a suspended VM is permanently
-// discarded (e.g., snapshot eviction, spot termination, platform crash).
-// If /terminate is NOT guaranteed after /suspend, residual pipeline-buffer
-// items that survived the parallel flush on /suspend will be lost with no
-// recovery path — identical to the /terminate data-loss risk we already
-// address with flushSequential.
+// But /terminate isn't guaranteed after /suspend: the platform terminates a
+// suspended VM without calling it (seen when suspendedDurationSeconds
+// expires). So /suspend may be the last hook. That's why it force-flushes
+// trace stats like /terminate does, while keeping the trace agent running for
+// a resume. Metrics stay on Flush (see ForceFlusher). Residual items the
+// parallel flush misses are lost if the VM is terminated while suspended.
 //
-// If the guarantee cannot be confirmed, change flushParallel → flushSequential
+// To close that race, change flushParallel → flushSequential
 // here. The implementation already supports it (handleWithForwarder and
 // dispatchHook both handle flushSequential). The impact of that change:
 //   - /suspend wall-clock increases from max(forwardTimeout, flushTimeout) to
-//     forwardTimeout + flushTimeout (default: 1s + 5s = 6s vs 5s today).
+//     forwardTimeout + flushTimeout (default: 1s + 1.5s = 2.5s vs 1.5s today).
 //   - The response body from the user app is fully buffered before flushing
 //     (same as /terminate), so logs emitted by the user app while writing its
 //     suspend response are included in the flush rather than risking the race.
