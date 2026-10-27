@@ -17,4 +17,6 @@ unit_tests_notify:
     - tests_linux-arm64-py3
     - job: tests_windows-x64
       optional: true
+    - job: tests_windows_msi_x64
+      optional: true
   allow_failure: true
