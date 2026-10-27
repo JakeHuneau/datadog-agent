@@ -5,7 +5,7 @@ load("//packages/rules:dd_pkg_owned_dirs.bzl", "dd_pkg_owned_dirs")
 
 # rpm only removes directories listed in the package on uninstall. Declare the
 # implicit parent directories of srcs so they don't get left behind.
-def _dd_pkg_rpm_impl(name, visibility, srcs, **kwargs):
+def _dd_pkg_rpm_impl(name, visibility, srcs, defines, **kwargs):
     owned_dirs = "%s_owned_dirs_" % name
     dd_pkg_owned_dirs(
         name = owned_dirs,
@@ -17,6 +17,7 @@ def _dd_pkg_rpm_impl(name, visibility, srcs, **kwargs):
     pkg_rpm_impl(
         name = name,
         srcs = srcs + [":" + owned_dirs],
+        defines = {"_build_id_links": "none"} | (defines or {}),
         visibility = visibility,
         **kwargs
     )
