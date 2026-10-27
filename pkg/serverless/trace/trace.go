@@ -194,6 +194,17 @@ func (t *serverlessTraceAgent) Flush() {
 	t.ta.FlushSync()
 }
 
+// FlushAll sends the stats concentrator's newest buckets, which Flush keeps in
+// memory, to the stats writer, then flushes synchronously. Unlike Stop, it
+// leaves the trace agent running. It doesn't force tracer-computed stats held
+// by the ClientStatsAggregator, which has no exported force flush.
+func (t *serverlessTraceAgent) FlushAll() {
+	if c, ok := t.ta.Concentrator.(*stats.Concentrator); ok {
+		c.Writer.Write(c.Flush(true))
+	}
+	t.ta.FlushSync()
+}
+
 // Process processes a payload in the trace agent.
 func (t *serverlessTraceAgent) Process(p *api.Payload) {
 	t.ta.Process(p)

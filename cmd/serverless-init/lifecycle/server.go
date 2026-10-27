@@ -120,13 +120,31 @@ type Flusher interface {
 	Flush()
 }
 
-// ForceFlusher is optionally satisfied by metricFlusher (ServerlessMetricAgent
-// does; the trace flusher doesn't). flushAll calls it only for /terminate,
-// never /suspend: /suspend can resume, and forcing the open bucket there would
-// let a later flush send a second, partial point for that bucket — overwriting
-// the pre-suspend data in the backend instead of merging with it.
+// ForceFlusher is optionally satisfied by metricFlusher (ServerlessMetricAgent)
+// and traceFlusher (ServerlessTraceAgent). flushAll calls it only
+// for /terminate, never /suspend: /suspend can resume, and forcing the open
+// bucket there would let a later flush send a second, partial point for that
+// bucket — overwriting the pre-suspend data in the backend instead of merging
+// with it.
 type ForceFlusher interface {
 	FlushAll()
+}
+
+// TraceStopper is optionally satisfied by traceFlusher (ServerlessTraceAgent
+// does). flushAll calls Stop instead of Flush only for /terminate. Flush
+// (FlushSync) leaves the stats concentrator's and client stats aggregator's
+// most recent buckets (~20-30s) unsent; only the trace agent's shutdown forces
+// them out. /terminate is final and the platform destroys the VM right after
+// the response, so the normal process shutdown never runs. Stop is idempotent,
+// so a later shutdown Stop is a no-op. Never used for /suspend: the VM can
+// resume and must keep tracing.
+//
+// flushAll calls ForceFlusher.FlushAll before Stop when the trace flusher has
+// it. Stop drains the trace receiver (up to 5s per in-flight request) before
+// forcing stats out, which can outlast the flush budget; FlushAll sends the
+// concentrator's stats first without waiting on the receiver.
+type TraceStopper interface {
+	Stop()
 }
 
 // LogsFlusher is satisfied by logsAgent.ServerlessLogsAgent.
@@ -510,7 +528,7 @@ func mirrorResponse(w http.ResponseWriter, resp *http.Response) {
 // and by handleSuspend / handleTerminate for the env-var-unset path.
 // It first drains any pending metric samples so that lifecycle metrics
 // emitted immediately before this call are included in the flush.
-// forceFlushAll is true only for /terminate (see ForceFlusher).
+// forceFlushAll is true only for /terminate (see ForceFlusher, TraceStopper).
 func (s *Server) flushAll(flushCtx context.Context, forceFlushAll bool) {
 	if s.sampleDrainer != nil {
 		drained := make(chan struct{})
@@ -532,7 +550,16 @@ func (s *Server) flushAll(flushCtx context.Context, forceFlushAll bool) {
 			s.metricFlusher.Flush()
 		}
 	})
-	wg.Go(s.traceFlusher.Flush)
+	wg.Go(func() {
+		if ts, ok := s.traceFlusher.(TraceStopper); ok && forceFlushAll {
+			if ff, ok := s.traceFlusher.(ForceFlusher); ok {
+				ff.FlushAll()
+			}
+			ts.Stop()
+		} else {
+			s.traceFlusher.Flush()
+		}
+	})
 	wg.Go(func() {
 		if s.logsFlusher != nil {
 			s.logsFlusher.Flush(flushCtx)
