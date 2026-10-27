@@ -118,12 +118,12 @@ dd_agent_go_test(
         "install_signature_test.go",
     ],
     data = glob(["testdata/**"]) + [
-        "//comp/trace/config/impl/hostname_helper",  # keep
+        "//comp/trace/config/impl/hostname_helper",
     ],
     embed = [":impl"],
     embedsrcs = ["testdata/stringcode.go.tmpl"],
     env = {
-        "HOSTNAME_HELPER": "$(rlocationpath //comp/trace/config/impl/hostname_helper)",  # keep
+        "HOSTNAME_HELPER": "$(rlocationpath //comp/trace/config/impl/hostname_helper)",
     },
     gotags_sets = [["otlp"]],
     deps = [
